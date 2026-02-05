@@ -1,0 +1,15 @@
+# Environment (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# Binaries
+*.exe
+main
+tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -2,19 +2,18 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iox-service/database"
 	model "iox-service/models"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// CreateUser inserts a new user into MongoDB
 func CreateUser(user *model.User) error {
 	if user.FirstName == "" || user.Email == "" {
 		return errors.New("first name and email are required")
@@ -26,81 +25,85 @@ func CreateUser(user *model.User) error {
 	}
 
 	user.Password = hashedPassword
+	user.ID = uuid.New().String()
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
 
-	collection := database.Client.Database("iox").Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err = collection.InsertOne(ctx, user)
+	_, err = database.Pool.Exec(ctx,
+		`INSERT INTO users (id, email, first_name, last_name, password, type, contact, address, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		user.ID, user.Email, user.FirstName, user.LastName, user.Password, string(user.Type),
+		user.Contact, mustMarshalAddress(user.Address), user.CreatedAt, user.UpdatedAt,
+	)
 	return err
 }
 
-// GetUsers fetches all users from MongoDB
 func GetUsers() ([]model.User, error) {
-	collection := database.Client.Database("iox").Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := collection.Find(ctx, bson.M{})
+	rows, err := database.Pool.Query(ctx, `SELECT id, email, first_name, last_name, password, type, contact, address, created_at, updated_at FROM users`)
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	var users []model.User
-	if err := cursor.All(ctx, &users); err != nil {
-		return nil, err
+	for rows.Next() {
+		var u model.User
+		var addr []byte
+		err := rows.Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.CreatedAt, &u.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		_ = unmarshalAddress(addr, &u.Address)
+		users = append(users, u)
 	}
-
-	return users, nil
+	return users, rows.Err()
 }
 
 func GetUserById(id string) (*model.User, error) {
-	collection := database.Client.Database("iox").Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	objectId, err := primitive.ObjectIDFromHex((id))
-
+	var u model.User
+	var addr []byte
+	err := database.Pool.QueryRow(ctx,
+		`SELECT id, email, first_name, last_name, password, type, contact, address, created_at, updated_at FROM users WHERE id = $1`, id,
+	).Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
-		return nil, errors.New("invalid user id")
-	}
-
-	var user model.User
-	err = collection.FindOne(ctx, bson.M{"_id": objectId}).Decode(&user)
-	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, errors.New("user not found")
+		}
 		return nil, err
 	}
-
-	return &user, nil
+	_ = unmarshalAddress(addr, &u.Address)
+	return &u, nil
 }
 
 func LoginUser(email, password string) (string, error) {
-	collection := database.Client.Database("iox").Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	var user model.User
-
-	err := collection.FindOne(ctx, bson.M{"email": email}).Decode(&user)
+	err := database.Pool.QueryRow(ctx,
+		`SELECT id, email, first_name, last_name, password, type FROM users WHERE email = $1`, email,
+	).Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Password, &user.Type)
 	if err != nil {
-		return "", errors.New("user does not eist")
-	}
-
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
-
-	if err != nil {
-		return "", errors.New("invalid login credentials")
-	}
-
-	token, err := generateToken(user.Email, int(user.Type))
-	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", errors.New("user does not exist")
+		}
 		return "", err
 	}
 
-	return token, nil
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+		return "", errors.New("invalid login credentials")
+	}
+
+	return generateToken(user.Email, user.Type)
 }
 
 func hashPassword(password string) (string, error) {
@@ -108,14 +111,75 @@ func hashPassword(password string) (string, error) {
 	return string(bytes), err
 }
 
-func generateToken(email string, userType int) (string, error) {
-	var jwtSecret = []byte("super-secret-key")
+func generateToken(email string, userType model.UserType) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": email,
-		"type":    userType,
+		"type":    string(userType),
 		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString([]byte("super-secret-key"))
+}
+
+func mustMarshalAddress(a model.Address) []byte {
+	b, _ := json.Marshal(a)
+	return b
+}
+
+func unmarshalAddress(b []byte, a *model.Address) error {
+	if len(b) == 0 {
+		return nil
+	}
+	return json.Unmarshal(b, a)
+}
+
+// GetUserIDByEmail returns user ID for the given email (used by cart, watchlist, order services)
+func GetUserIDByEmail(email string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var id string
+	err := database.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, email).Scan(&id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", errors.New("user not found")
+		}
+		return "", err
+	}
+	return id, nil
+}
+
+// GetUserByEmail returns the user by email (for /users/me).
+func GetUserByEmail(email string) (*model.User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var u model.User
+	var addr []byte
+	err := database.Pool.QueryRow(ctx,
+		`SELECT id, email, first_name, last_name, password, type, contact, address, created_at, updated_at FROM users WHERE email = $1`, email,
+	).Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, errors.New("user not found")
+		}
+		return nil, err
+	}
+	_ = unmarshalAddress(addr, &u.Address)
+	return &u, nil
+}
+
+// UpdateUser updates first name, last name, contact, address. Does not change email, type, or password.
+func UpdateUser(id string, firstName, lastName, contact string, address *model.Address) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var addrBytes []byte
+	if address != nil {
+		addrBytes = mustMarshalAddress(*address)
+	} else {
+		addrBytes = mustMarshalAddress(model.Address{})
+	}
+	_, err := database.Pool.Exec(ctx,
+		`UPDATE users SET first_name = $1, last_name = $2, contact = $3, address = $4, updated_at = $5 WHERE id = $6`,
+		firstName, lastName, contact, addrBytes, time.Now(), id,
+	)
+	return err
 }

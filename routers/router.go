@@ -27,11 +27,14 @@ func Setup() *gin.Engine {
 	// Add CORS middleware
 	r.Use(corsMiddleware())
 
-	// Optional: create a base API group
 	api := r.Group("/api/v1")
 
-	// Attach user routes
 	SetupUserRoutes(api)
+	SetupProductRoutes(api)
+	SetupWatchlistRoutes(api)
+	SetupCartRoutes(api)
+	SetupOrderRoutes(api)
+	SetupReturnsRoutes(api)
 
 	return r
 }

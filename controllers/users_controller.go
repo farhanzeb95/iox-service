@@ -67,6 +67,80 @@ func LoginUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, token)
+	c.JSON(http.StatusOK, gin.H{"token": token})
+}
 
+// GetCurrentUser handles GET /users/me (auth required). Returns current user without password.
+func GetCurrentUser(c *gin.Context) {
+	emailVal, ok := c.Get("user_email")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	email, ok := emailVal.(string)
+	if !ok || email == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user"})
+		return
+	}
+	user, err := services.GetUserByEmail(email)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	user.Password = ""
+	c.JSON(http.StatusOK, user)
+}
+
+// UpdateCurrentUser handles PATCH /users/:id (auth required). User can only update their own profile.
+func UpdateCurrentUser(c *gin.Context) {
+	emailVal, ok := c.Get("user_email")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		return
+	}
+	email, ok := emailVal.(string)
+	if !ok || email == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user"})
+		return
+	}
+	id := c.Param("id")
+	user, err := services.GetUserById(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if user.Email != email {
+		c.JSON(http.StatusForbidden, gin.H{"error": "can only update your own profile"})
+		return
+	}
+	var body struct {
+		FirstName string         `json:"FirstName"`
+		LastName  string         `json:"LastName"`
+		Contact   string         `json:"Contact"`
+		Address   *model.Address `json:"Address"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	firstName := body.FirstName
+	if firstName == "" {
+		firstName = user.FirstName
+	}
+	lastName := body.LastName
+	if lastName == "" {
+		lastName = user.LastName
+	}
+	contact := body.Contact
+	addr := body.Address
+	if addr == nil {
+		addr = &user.Address
+	}
+	if err := services.UpdateUser(id, firstName, lastName, contact, addr); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	updated, _ := services.GetUserById(id)
+	updated.Password = ""
+	c.JSON(http.StatusOK, updated)
 }

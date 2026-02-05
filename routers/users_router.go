@@ -2,6 +2,7 @@ package router
 
 import (
 	user_controller "iox-service/controllers"
+	"iox-service/middleware"
 
 	"github.com/gin-gonic/gin"
 )
@@ -11,9 +12,10 @@ func SetupUserRoutes(rg *gin.RouterGroup) {
 	users := rg.Group("/users")
 	{
 		users.POST("", user_controller.CreateUser)
-		users.GET("", user_controller.GetUsers) // optional: list all users
-		users.GET("/:id", user_controller.GetUserById)
+		users.GET("", user_controller.GetUsers)
 		users.POST("/login", user_controller.LoginUser)
-		// you can add PUT, DELETE routes here
+		users.GET("/me", middleware.AuthMiddleware(), user_controller.GetCurrentUser)
+		users.PATCH("/:id", middleware.AuthMiddleware(), user_controller.UpdateCurrentUser)
+		users.GET("/:id", user_controller.GetUserById)
 	}
 }

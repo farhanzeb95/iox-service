@@ -1,29 +1,51 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"time"
 )
 
-type UserType int
+type UserType string
 
 const (
-	Admin  UserType = 1
-	Seller UserType = 2
-	Buyer  UserType = 3
+	TypeAdmin          UserType = "ADMIN"
+	TypeBuyer          UserType = "BUYER"
+	TypePrivateSeller  UserType = "PRIVATE_SELLER"
+	TypeBusinessSeller UserType = "BUSINESS_SELLER"
 )
 
+type Address struct {
+	City    string `json:"City,omitempty"`
+	State   string `json:"State,omitempty"`
+	Zip     string `json:"Zip,omitempty"`
+	Country string `json:"Country,omitempty"`
+}
+
+func (a Address) Value() (driver.Value, error) {
+	return json.Marshal(a)
+}
+
+func (a *Address) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	b, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	return json.Unmarshal(b, a)
+}
+
 type User struct {
-	FirstName string
-	LastName  string
-	Email     string
-	Password  string
-	Type      UserType
-	Contact   string
-	City      string
-	State     string
-	Zip       string
-	Country   string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt time.Time
+	ID        string    `json:"id,omitempty"`
+	FirstName string    `json:"FirstName"`
+	LastName  string    `json:"LastName"`
+	Email     string    `json:"Email"`
+	Password  string    `json:"Password"`
+	Type      UserType  `json:"Type"`
+	Contact   string    `json:"Contact"`
+	Address   Address   `json:"Address"`
+	CreatedAt time.Time `json:"createdAt,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 }
