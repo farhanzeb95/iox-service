@@ -8,10 +8,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func configuredOrigins() map[string]bool {
+func configuredOrigins() (map[string]bool, bool) {
 	value := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	if value == "" {
-		value = "http://localhost:5173"
+		return nil, true
+	}
+	if value == "*" {
+		return nil, true
 	}
 
 	origins := make(map[string]bool)
@@ -21,15 +24,15 @@ func configuredOrigins() map[string]bool {
 			origins[origin] = true
 		}
 	}
-	return origins
+	return origins, false
 }
 
 func corsMiddleware() gin.HandlerFunc {
-	allowedOrigins := configuredOrigins()
+	allowedOrigins, allowAllOrigins := configuredOrigins()
 	return func(c *gin.Context) {
 		origin := strings.TrimRight(strings.TrimSpace(c.GetHeader("Origin")), "/")
 		if origin != "" {
-			if !allowedOrigins[origin] {
+			if !allowAllOrigins && !allowedOrigins[origin] {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "origin is not allowed"})
 				return
 			}

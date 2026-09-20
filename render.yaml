@@ -8,7 +8,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        value: '*'
       - key: JWT_SECRET
         sync: false
       - key: SUPABASE_DATABASE_URL
