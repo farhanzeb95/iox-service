@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"strings"
@@ -50,7 +51,11 @@ func main() {
 	}
 	database.Connect(dbURL)
 	log.Println("Database: Supabase (PostgreSQL)")
-	if err := database.RunMigrations(migrationFiles); err != nil {
+	migrations, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		log.Fatalf("embedded migrations are unavailable: %v", err)
+	}
+	if err := database.RunMigrations(migrations); err != nil {
 		log.Fatalf("database migrations failed: %v", err)
 	}
 

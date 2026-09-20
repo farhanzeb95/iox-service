@@ -27,6 +27,9 @@ func RunMigrations(migrationFS fs.FS) error {
 		}
 	}
 	sort.Strings(files)
+	if len(files) == 0 {
+		return fmt.Errorf("no SQL migration files found")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
