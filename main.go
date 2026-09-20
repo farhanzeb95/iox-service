@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +13,12 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+// migrationFiles are embedded into the deployed binary so Render does not
+// need a separate SQL or filesystem step during startup.
+//
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
 
 func main() {
 	// Load the selected local environment file without overriding shell/host values.
@@ -43,6 +50,9 @@ func main() {
 	}
 	database.Connect(dbURL)
 	log.Println("Database: Supabase (PostgreSQL)")
+	if err := database.RunMigrations(migrationFiles); err != nil {
+		log.Fatalf("database migrations failed: %v", err)
+	}
 
 	// Initialize Supabase Storage (S3-compatible) for image uploads
 	supabaseStorageEndpoint := os.Getenv("SUPABASE_STORAGE_S3_ENDPOINT")
