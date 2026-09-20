@@ -2,17 +2,23 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtSecret = []byte("super-secret-key")
-
 // AuthMiddleware validates JWT token and extracts user info
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+		if secret == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "JWT secret is not configured"})
+			c.Abort()
+			return
+		}
+
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
@@ -35,7 +41,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
 			}
-			return jwtSecret, nil
+			return []byte(secret), nil
 		})
 
 		if err != nil || !token.Valid {

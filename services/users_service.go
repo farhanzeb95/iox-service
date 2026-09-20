@@ -6,6 +6,8 @@ import (
 	"errors"
 	"iox-service/database"
 	model "iox-service/models"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -18,6 +20,14 @@ func CreateUser(user *model.User) error {
 	if user.FirstName == "" || user.Email == "" {
 		return errors.New("first name and email are required")
 	}
+	if user.Type == model.TypeBusinessSeller && user.BusinessRegistrationURL == "" {
+		return errors.New("business registration document is required for business seller")
+	}
+	if user.Type == model.TypePrivateSeller {
+		if user.IdCardFrontURL == "" || user.IdCardBackURL == "" {
+			return errors.New("ID card front and back images are required for private seller")
+		}
+	}
 
 	hashedPassword, err := hashPassword(user.Password)
 	if err != nil {
@@ -29,23 +39,38 @@ func CreateUser(user *model.User) error {
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
 
+	status := model.UserStatusActive
+	if user.Type == model.TypePrivateSeller || user.Type == model.TypeBusinessSeller {
+		status = model.UserStatusInReview
+	}
+	user.Status = status
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	_, err = database.Pool.Exec(ctx,
-		`INSERT INTO users (id, email, first_name, last_name, password, type, contact, address, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		`INSERT INTO users (id, email, first_name, last_name, password, type, contact, address, status, business_registration_url, id_card_front_url, id_card_back_url, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		user.ID, user.Email, user.FirstName, user.LastName, user.Password, string(user.Type),
-		user.Contact, mustMarshalAddress(user.Address), user.CreatedAt, user.UpdatedAt,
+		user.Contact, mustMarshalAddress(user.Address), status,
+		nullIfEmpty(user.BusinessRegistrationURL), nullIfEmpty(user.IdCardFrontURL), nullIfEmpty(user.IdCardBackURL),
+		user.CreatedAt, user.UpdatedAt,
 	)
 	return err
+}
+
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func GetUsers() ([]model.User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	rows, err := database.Pool.Query(ctx, `SELECT id, email, first_name, last_name, password, type, contact, address, created_at, updated_at FROM users`)
+	rows, err := database.Pool.Query(ctx, `SELECT id, email, first_name, last_name, password, type, contact, address, status, business_registration_url, id_card_front_url, id_card_back_url, created_at, updated_at FROM users`)
 	if err != nil {
 		return nil, err
 	}
@@ -55,11 +80,21 @@ func GetUsers() ([]model.User, error) {
 	for rows.Next() {
 		var u model.User
 		var addr []byte
-		err := rows.Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.CreatedAt, &u.UpdatedAt)
+		var bizReg, idFront, idBack *string
+		err := rows.Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.Status, &bizReg, &idFront, &idBack, &u.CreatedAt, &u.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
 		_ = unmarshalAddress(addr, &u.Address)
+		if bizReg != nil {
+			u.BusinessRegistrationURL = *bizReg
+		}
+		if idFront != nil {
+			u.IdCardFrontURL = *idFront
+		}
+		if idBack != nil {
+			u.IdCardBackURL = *idBack
+		}
 		users = append(users, u)
 	}
 	return users, rows.Err()
@@ -71,9 +106,10 @@ func GetUserById(id string) (*model.User, error) {
 
 	var u model.User
 	var addr []byte
+	var bizReg, idFront, idBack *string
 	err := database.Pool.QueryRow(ctx,
-		`SELECT id, email, first_name, last_name, password, type, contact, address, created_at, updated_at FROM users WHERE id = $1`, id,
-	).Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.CreatedAt, &u.UpdatedAt)
+		`SELECT id, email, first_name, last_name, password, type, contact, address, status, business_registration_url, id_card_front_url, id_card_back_url, created_at, updated_at FROM users WHERE id = $1`, id,
+	).Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.Status, &bizReg, &idFront, &idBack, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, errors.New("user not found")
@@ -81,6 +117,15 @@ func GetUserById(id string) (*model.User, error) {
 		return nil, err
 	}
 	_ = unmarshalAddress(addr, &u.Address)
+	if bizReg != nil {
+		u.BusinessRegistrationURL = *bizReg
+	}
+	if idFront != nil {
+		u.IdCardFrontURL = *idFront
+	}
+	if idBack != nil {
+		u.IdCardBackURL = *idBack
+	}
 	return &u, nil
 }
 
@@ -112,13 +157,18 @@ func hashPassword(password string) (string, error) {
 }
 
 func generateToken(email string, userType model.UserType) (string, error) {
+	secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	if secret == "" {
+		return "", errors.New("JWT secret is not configured")
+	}
+
 	claims := jwt.MapClaims{
 		"user_id": email,
 		"type":    string(userType),
 		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte("super-secret-key"))
+	return token.SignedString([]byte(secret))
 }
 
 func mustMarshalAddress(a model.Address) []byte {
@@ -154,9 +204,10 @@ func GetUserByEmail(email string) (*model.User, error) {
 	defer cancel()
 	var u model.User
 	var addr []byte
+	var bizReg, idFront, idBack *string
 	err := database.Pool.QueryRow(ctx,
-		`SELECT id, email, first_name, last_name, password, type, contact, address, created_at, updated_at FROM users WHERE email = $1`, email,
-	).Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.CreatedAt, &u.UpdatedAt)
+		`SELECT id, email, first_name, last_name, password, type, contact, address, status, business_registration_url, id_card_front_url, id_card_back_url, created_at, updated_at FROM users WHERE email = $1`, email,
+	).Scan(&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.Password, &u.Type, &u.Contact, &addr, &u.Status, &bizReg, &idFront, &idBack, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, errors.New("user not found")
@@ -164,6 +215,15 @@ func GetUserByEmail(email string) (*model.User, error) {
 		return nil, err
 	}
 	_ = unmarshalAddress(addr, &u.Address)
+	if bizReg != nil {
+		u.BusinessRegistrationURL = *bizReg
+	}
+	if idFront != nil {
+		u.IdCardFrontURL = *idFront
+	}
+	if idBack != nil {
+		u.IdCardBackURL = *idBack
+	}
 	return &u, nil
 }
 

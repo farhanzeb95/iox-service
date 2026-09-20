@@ -1,16 +1,44 @@
 package router
 
 import (
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 )
 
-// CORS middleware
+func configuredOrigins() map[string]bool {
+	value := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	if value == "" {
+		value = "http://localhost:5173"
+	}
+
+	origins := make(map[string]bool)
+	for _, origin := range strings.Split(value, ",") {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin != "" {
+			origins[origin] = true
+		}
+	}
+	return origins
+}
+
 func corsMiddleware() gin.HandlerFunc {
+	allowedOrigins := configuredOrigins()
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+		origin := strings.TrimRight(strings.TrimSpace(c.GetHeader("Origin")), "/")
+		if origin != "" {
+			if !allowedOrigins[origin] {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "origin is not allowed"})
+				return
+			}
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Vary", "Origin")
+		}
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Accept, Origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -23,11 +51,15 @@ func corsMiddleware() gin.HandlerFunc {
 
 func Setup() *gin.Engine {
 	r := gin.Default()
-
-	// Add CORS middleware
 	r.Use(corsMiddleware())
 
+	health := func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	}
+	r.GET("/health", health)
+
 	api := r.Group("/api/v1")
+	api.GET("/health", health)
 
 	SetupUserRoutes(api)
 	SetupProductRoutes(api)
@@ -35,6 +67,7 @@ func Setup() *gin.Engine {
 	SetupCartRoutes(api)
 	SetupOrderRoutes(api)
 	SetupReturnsRoutes(api)
+	SetupSellerStoreFeeRoutes(api)
 
 	return r
 }

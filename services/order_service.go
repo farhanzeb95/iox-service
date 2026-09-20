@@ -22,7 +22,8 @@ type PlaceOrderInput struct {
 func CreateOrdersFromCart(userEmail string, shippingAddress model.Address, paymentMethod string) ([]model.Order, error) {
 	validPayment := map[string]bool{
 		model.PaymentCOD: true, model.PaymentBankTransfer: true,
-		model.PaymentJazzCash: true, model.PaymentEasyPaisa: true, model.PaymentCard: true,
+		model.PaymentJazzCash: true, model.PaymentEasyPaisa: true,
+		model.PaymentRaast: true, model.PaymentCard: true,
 	}
 	if !validPayment[paymentMethod] {
 		return nil, errors.New("invalid payment method")
@@ -35,9 +36,16 @@ func CreateOrdersFromCart(userEmail string, shippingAddress model.Address, payme
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	tx, err := database.Pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	var buyerName string
-	err = database.Pool.QueryRow(ctx, `SELECT first_name || ' ' || last_name FROM users WHERE id = $1`, userID).Scan(&buyerName)
+	err = tx.QueryRow(ctx, `SELECT first_name || ' ' || last_name FROM users WHERE id = $1`, userID).Scan(&buyerName)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, errors.New("user not found")
@@ -65,7 +73,7 @@ func CreateOrdersFromCart(userEmail string, shippingAddress model.Address, payme
 		var stock int
 		var title, sellerID, sellerName string
 		var imagesJSON []byte
-		err := database.Pool.QueryRow(ctx,
+		err := tx.QueryRow(ctx,
 			`SELECT title, price, quantity, seller_id, seller_name, images FROM products WHERE id = $1`, it.ProductID,
 		).Scan(&title, &price, &stock, &sellerID, &sellerName, &imagesJSON)
 		if err != nil {
@@ -108,7 +116,7 @@ func CreateOrdersFromCart(userEmail string, shippingAddress model.Address, payme
 		}
 
 		orderID := uuid.New().String()
-		_, err := database.Pool.Exec(ctx,
+		_, err := tx.Exec(ctx,
 			`INSERT INTO orders (id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 			orderID, userID, g.sellerID, userEmail, buyerName, g.sellerName, subTotal, "PENDING", paymentMethod, "PENDING", addrJSON, now, now,
@@ -119,11 +127,20 @@ func CreateOrdersFromCart(userEmail string, shippingAddress model.Address, payme
 		}
 
 		for _, l := range g.lines {
-			_, _ = database.Pool.Exec(ctx,
+			_, err = tx.Exec(ctx,
 				`INSERT INTO order_lines (id, order_id, product_id, title, price, quantity, image_url) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 				uuid.New(), orderID, l.ProductID, l.Title, l.Price, l.Quantity, l.ImageURL,
 			)
-			_, _ = database.Pool.Exec(ctx, `UPDATE products SET quantity = quantity - $1, updated_at = $2 WHERE id = $3`, l.Quantity, now, l.ProductID)
+			if err != nil {
+				return nil, err
+			}
+			updateResult, err := tx.Exec(ctx, `UPDATE products SET quantity = quantity - $1, updated_at = $2 WHERE id = $3 AND quantity >= $1`, l.Quantity, now, l.ProductID)
+			if err != nil {
+				return nil, err
+			}
+			if updateResult.RowsAffected() == 0 {
+				return nil, errors.New("insufficient stock for: " + l.Title)
+			}
 		}
 
 		created = append(created, model.Order{
@@ -144,7 +161,23 @@ func CreateOrdersFromCart(userEmail string, shippingAddress model.Address, payme
 		})
 	}
 
-	_ = ClearCart(userEmail)
+	var cartID string
+	err = tx.QueryRow(ctx, `SELECT id FROM carts WHERE user_id = $1`, userID).Scan(&cartID)
+	if err != nil && err != pgx.ErrNoRows {
+		return nil, err
+	}
+	if err == nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM cart_items WHERE cart_id = $1`, cartID); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE carts SET updated_at = $1 WHERE id = $2`, now, cartID); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return created, nil
 }
 
@@ -157,7 +190,7 @@ func GetOrdersByBuyer(userEmail string) ([]model.Order, error) {
 	defer cancel()
 
 	rows, err := database.Pool.Query(ctx,
-		`SELECT id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, created_at, updated_at FROM orders WHERE buyer_id = $1 ORDER BY created_at DESC`,
+		`SELECT id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, tracking_number, carrier, created_at, updated_at FROM orders WHERE buyer_id = $1 ORDER BY created_at DESC`,
 		userID,
 	)
 	if err != nil {
@@ -169,10 +202,17 @@ func GetOrdersByBuyer(userEmail string) ([]model.Order, error) {
 	for rows.Next() {
 		var o model.Order
 		var addrJSON []byte
-		if err := rows.Scan(&o.ID, &o.BuyerID, &o.SellerID, &o.BuyerEmail, &o.BuyerName, &o.SellerName, &o.SubTotal, &o.Status, &o.PaymentMethod, &o.PaymentStatus, &addrJSON, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		var trackingNumber, carrier *string
+		if err := rows.Scan(&o.ID, &o.BuyerID, &o.SellerID, &o.BuyerEmail, &o.BuyerName, &o.SellerName, &o.SubTotal, &o.Status, &o.PaymentMethod, &o.PaymentStatus, &addrJSON, &trackingNumber, &carrier, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(addrJSON, &o.ShippingAddress)
+		if trackingNumber != nil {
+			o.TrackingNumber = *trackingNumber
+		}
+		if carrier != nil {
+			o.Carrier = *carrier
+		}
 		o.Items = nil
 		lineRows, _ := database.Pool.Query(ctx, `SELECT product_id, title, price, quantity, image_url FROM order_lines WHERE order_id = $1`, o.ID)
 		for lineRows.Next() {
@@ -195,7 +235,7 @@ func GetOrdersBySeller(userEmail string) ([]model.Order, error) {
 	defer cancel()
 
 	rows, err := database.Pool.Query(ctx,
-		`SELECT id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, created_at, updated_at FROM orders WHERE seller_id = $1 ORDER BY created_at DESC`,
+		`SELECT id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, tracking_number, carrier, created_at, updated_at FROM orders WHERE seller_id = $1 ORDER BY created_at DESC`,
 		sellerID,
 	)
 	if err != nil {
@@ -207,10 +247,17 @@ func GetOrdersBySeller(userEmail string) ([]model.Order, error) {
 	for rows.Next() {
 		var o model.Order
 		var addrJSON []byte
-		if err := rows.Scan(&o.ID, &o.BuyerID, &o.SellerID, &o.BuyerEmail, &o.BuyerName, &o.SellerName, &o.SubTotal, &o.Status, &o.PaymentMethod, &o.PaymentStatus, &addrJSON, &o.CreatedAt, &o.UpdatedAt); err != nil {
+		var trackingNumber, carrier *string
+		if err := rows.Scan(&o.ID, &o.BuyerID, &o.SellerID, &o.BuyerEmail, &o.BuyerName, &o.SellerName, &o.SubTotal, &o.Status, &o.PaymentMethod, &o.PaymentStatus, &addrJSON, &trackingNumber, &carrier, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(addrJSON, &o.ShippingAddress)
+		if trackingNumber != nil {
+			o.TrackingNumber = *trackingNumber
+		}
+		if carrier != nil {
+			o.Carrier = *carrier
+		}
 		o.Items = nil
 		lineRows, _ := database.Pool.Query(ctx, `SELECT product_id, title, price, quantity, image_url FROM order_lines WHERE order_id = $1`, o.ID)
 		for lineRows.Next() {
@@ -231,10 +278,11 @@ func GetOrderByID(orderID string, userEmail string, isBuyer bool) (*model.Order,
 
 	var o model.Order
 	var addrJSON []byte
+	var trackingNumber, carrier *string
 	err := database.Pool.QueryRow(ctx,
-		`SELECT id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, created_at, updated_at FROM orders WHERE id = $1`,
+		`SELECT id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, tracking_number, carrier, created_at, updated_at FROM orders WHERE id = $1`,
 		orderID,
-	).Scan(&o.ID, &o.BuyerID, &o.SellerID, &o.BuyerEmail, &o.BuyerName, &o.SellerName, &o.SubTotal, &o.Status, &o.PaymentMethod, &o.PaymentStatus, &addrJSON, &o.CreatedAt, &o.UpdatedAt)
+	).Scan(&o.ID, &o.BuyerID, &o.SellerID, &o.BuyerEmail, &o.BuyerName, &o.SellerName, &o.SubTotal, &o.Status, &o.PaymentMethod, &o.PaymentStatus, &addrJSON, &trackingNumber, &carrier, &o.CreatedAt, &o.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, errors.New("order not found")
@@ -242,6 +290,12 @@ func GetOrderByID(orderID string, userEmail string, isBuyer bool) (*model.Order,
 		return nil, err
 	}
 	_ = json.Unmarshal(addrJSON, &o.ShippingAddress)
+	if trackingNumber != nil {
+		o.TrackingNumber = *trackingNumber
+	}
+	if carrier != nil {
+		o.Carrier = *carrier
+	}
 
 	// Load order lines
 	lineRows, err := database.Pool.Query(ctx, `SELECT product_id, title, price, quantity, image_url FROM order_lines WHERE order_id = $1`, o.ID)
@@ -281,7 +335,7 @@ const (
 	StatusCancelled = "CANCELLED"
 )
 
-func UpdateOrderStatus(orderID string, userEmail string, isBuyer bool, newStatus string) (*model.Order, error) {
+func UpdateOrderStatus(orderID string, userEmail string, isBuyer bool, newStatus string, trackingNumber, carrier string) (*model.Order, error) {
 	order, err := GetOrderByID(orderID, userEmail, isBuyer)
 	if err != nil {
 		return nil, err
@@ -321,11 +375,27 @@ func UpdateOrderStatus(orderID string, userEmail string, isBuyer bool, newStatus
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err = database.Pool.Exec(ctx, `UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3`, newStatus, time.Now(), orderID)
+	now := time.Now()
+	if newStatus == StatusConfirmed || newStatus == StatusShipped {
+		_, err = database.Pool.Exec(ctx,
+			`UPDATE orders SET status = $1, updated_at = $2, tracking_number = NULLIF(TRIM($3), ''), carrier = NULLIF(TRIM($4), '') WHERE id = $5`,
+			newStatus, now, strings.TrimSpace(trackingNumber), strings.TrimSpace(carrier), orderID,
+		)
+	} else {
+		_, err = database.Pool.Exec(ctx, `UPDATE orders SET status = $1, updated_at = $2 WHERE id = $3`, newStatus, now, orderID)
+	}
 	if err != nil {
 		return nil, err
 	}
 	order.Status = newStatus
-	order.UpdatedAt = time.Now()
+	order.UpdatedAt = now
+	if newStatus == StatusConfirmed || newStatus == StatusShipped {
+		if strings.TrimSpace(trackingNumber) != "" {
+			order.TrackingNumber = strings.TrimSpace(trackingNumber)
+		}
+		if strings.TrimSpace(carrier) != "" {
+			order.Carrier = strings.TrimSpace(carrier)
+		}
+	}
 	return order, nil
 }

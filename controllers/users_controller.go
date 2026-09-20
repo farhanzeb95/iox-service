@@ -4,6 +4,7 @@ import (
 	model "iox-service/models"
 	services "iox-service/services"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,6 +25,7 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 
+	user.Password = ""
 	c.JSON(http.StatusCreated, user)
 }
 
@@ -35,6 +37,9 @@ func GetUsers(c *gin.Context) {
 		return
 	}
 
+	for i := range users {
+		users[i].Password = ""
+	}
 	c.JSON(http.StatusOK, users)
 }
 
@@ -47,6 +52,7 @@ func GetUserById(c *gin.Context) {
 		return
 	}
 
+	user.Password = ""
 	c.JSON(http.StatusOK, user)
 }
 
@@ -143,4 +149,26 @@ func UpdateCurrentUser(c *gin.Context) {
 	updated, _ := services.GetUserById(id)
 	updated.Password = ""
 	c.JSON(http.StatusOK, updated)
+}
+
+// UploadSignupDocument handles POST /users/upload-signup-document (no auth).
+// Accepts a single file (form key "document") for identity/business docs; returns public URL.
+func UploadSignupDocument(c *gin.Context) {
+	bucket := os.Getenv("SUPABASE_STORAGE_BUCKET_USERS")
+	if bucket == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Document upload not configured (SUPABASE_STORAGE_BUCKET_USERS)"})
+		return
+	}
+	file, header, err := c.Request.FormFile("document")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing or invalid file: use form key 'document'"})
+		return
+	}
+	defer file.Close()
+	url, err := services.UploadImageToBucket(bucket, "identity-docs", file, header)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": url})
 }

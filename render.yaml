@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: iox-service
+    runtime: go
+    plan: free
+    buildCommand: go build -o app .
+    startCommand: ./app
+    healthCheckPath: /health
+    envVars:
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SUPABASE_DATABASE_URL
+        sync: false
+      - key: SUPABASE_STORAGE_S3_ENDPOINT
+        sync: false
+      - key: SUPABASE_STORAGE_ACCESS_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: products
+      - key: SUPABASE_STORAGE_BUCKET_USERS
+        value: users

@@ -36,7 +36,8 @@ func CreateProduct(c *gin.Context) {
 	// Call service layer
 	if err := services.CreateProduct(&product, emailStr); err != nil {
 		// Check if it's a validation error
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
+		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") ||
+			strings.Contains(err.Error(), "only sellers") || strings.Contains(err.Error(), "approved") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

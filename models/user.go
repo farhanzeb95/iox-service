@@ -37,15 +37,26 @@ func (a *Address) Scan(value interface{}) error {
 	return json.Unmarshal(b, a)
 }
 
+// UserStatus for seller account review
+const (
+	UserStatusActive   = "ACTIVE"
+	UserStatusInReview = "IN_REVIEW"
+	UserStatusRejected = "REJECTED"
+)
+
 type User struct {
-	ID        string    `json:"id,omitempty"`
-	FirstName string    `json:"FirstName"`
-	LastName  string    `json:"LastName"`
-	Email     string    `json:"Email"`
-	Password  string    `json:"Password"`
-	Type      UserType  `json:"Type"`
-	Contact   string    `json:"Contact"`
-	Address   Address   `json:"Address"`
-	CreatedAt time.Time `json:"createdAt,omitempty"`
-	UpdatedAt time.Time `json:"updatedAt,omitempty"`
+	ID                     string    `json:"id,omitempty"`
+	FirstName              string    `json:"FirstName"`
+	LastName               string    `json:"LastName"`
+	Email                  string    `json:"Email"`
+	Password               string    `json:"Password"`
+	Type                   UserType  `json:"Type"`
+	Contact                string    `json:"Contact"`
+	Address                Address   `json:"Address"`
+	Status                 string    `json:"status"` // ACTIVE, IN_REVIEW, REJECTED
+	BusinessRegistrationURL string    `json:"businessRegistrationUrl,omitempty"`
+	IdCardFrontURL         string    `json:"idCardFrontUrl,omitempty"`
+	IdCardBackURL          string    `json:"idCardBackUrl,omitempty"`
+	CreatedAt              time.Time `json:"createdAt,omitempty"`
+	UpdatedAt              time.Time `json:"updatedAt,omitempty"`
 }

@@ -14,10 +14,19 @@ import (
 )
 
 func main() {
-	// Load .env from current directory (ignore error if file missing)
-	_ = godotenv.Load()
+	// Load the selected local environment file without overriding shell/host values.
+	envFile := strings.TrimSpace(os.Getenv("ENV_FILE"))
+	if envFile == "" {
+		envFile = ".env"
+	}
+	if err := godotenv.Load(envFile); err != nil && envFile != ".env" {
+		log.Fatalf("failed to load environment file %q: %v", envFile, err)
+	}
 
-	port := os.Getenv("APP_PORT")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = os.Getenv("APP_PORT")
+	}
 	if port == "" {
 		port = "9001"
 	}
@@ -85,5 +94,7 @@ func main() {
 	r := router.Setup()
 
 	log.Printf("🟢 App is running on port %s\n", port)
-	r.Run(":" + port) // start HTTP server
+	if err := r.Run(":" + port); err != nil {
+		log.Fatalf("server stopped: %v", err)
+	}
 }

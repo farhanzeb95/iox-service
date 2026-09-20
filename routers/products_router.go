@@ -25,7 +25,7 @@ func SetupProductRoutes(rg *gin.RouterGroup) {
 		protected.Use(middleware.AuthMiddleware())
 		{
 			protected.GET("/my-products", product_controller.GetMyProducts) // Get current user's products
-			protected.POST("", product_controller.CreateProduct)
+			protected.POST("", middleware.RequireRole("PRIVATE_SELLER", "BUSINESS_SELLER"), product_controller.CreateProduct)
 			protected.POST("/upload", upload_controller.UploadProductImages) // Image upload endpoint
 			protected.PUT("/:id", product_controller.UpdateProduct)
 			protected.DELETE("/:id", product_controller.DeleteProduct)

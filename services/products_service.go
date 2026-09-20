@@ -42,13 +42,28 @@ func CreateProduct(product *model.Product, sellerEmail string) error {
 	defer cancel()
 
 	var seller model.User
-	err := database.Pool.QueryRow(ctx, `SELECT id, first_name, last_name FROM users WHERE email = $1`, sellerEmail).
-		Scan(&seller.ID, &seller.FirstName, &seller.LastName)
+	var feeStatus string
+	err := database.Pool.QueryRow(ctx, `
+		SELECT u.id, u.first_name, u.last_name, u.type, u.status,
+		       COALESCE(f.status, 'NOT_SUBMITTED')
+		FROM users u
+		LEFT JOIN seller_store_fees f ON f.seller_id = u.id
+		WHERE u.email = $1`, sellerEmail).
+		Scan(&seller.ID, &seller.FirstName, &seller.LastName, &seller.Type, &seller.Status, &feeStatus)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return errors.New("seller not found")
 		}
 		return err
+	}
+	if seller.Type != model.TypePrivateSeller && seller.Type != model.TypeBusinessSeller {
+		return errors.New("only sellers can create products")
+	}
+	if seller.Status != model.UserStatusActive {
+		return errors.New("seller account must be approved before listing products")
+	}
+	if feeStatus != model.SellerFeePaid {
+		return errors.New("seller store fee must be paid before listing products")
 	}
 
 	product.ID = uuid.New().String()

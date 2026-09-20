@@ -117,7 +117,9 @@ func GetOrderByID(c *gin.Context) {
 
 // UpdateOrderStatusInput is the request body for PATCH /orders/:id/status
 type UpdateOrderStatusInput struct {
-	Status string `json:"status" binding:"required"`
+	Status          string `json:"status" binding:"required"`
+	TrackingNumber  string `json:"trackingNumber"`
+	Carrier         string `json:"carrier"`
 }
 
 // UpdateOrderStatus handles PATCH /orders/:id/status - seller: CONFIRMED/SHIPPED/DELIVERED; buyer/seller: CANCELLED when PENDING
@@ -147,7 +149,7 @@ func UpdateOrderStatus(c *gin.Context) {
 		return
 	}
 
-	order, err := services.UpdateOrderStatus(orderID, emailStr, isBuyer, input.Status)
+	order, err := services.UpdateOrderStatus(orderID, emailStr, isBuyer, input.Status, input.TrackingNumber, input.Carrier)
 	if err != nil {
 		if err.Error() == "order not found" {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
