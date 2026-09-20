@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,6 +22,9 @@ func Connect(connString string) {
 	if err != nil {
 		log.Fatal("Parse Supabase connection string failed:", err)
 	}
+	// Supabase's transaction pooler can route queries to different backend
+	// connections, so pgx prepared-statement caching is not safe here.
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	config.MaxConns = 25
 	config.MinConns = 2
 
