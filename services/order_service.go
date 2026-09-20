@@ -119,7 +119,7 @@ func CreateOrdersFromCart(userEmail string, shippingAddress model.Address, payme
 		_, err := tx.Exec(ctx,
 			`INSERT INTO orders (id, buyer_id, seller_id, buyer_email, buyer_name, seller_name, sub_total, status, payment_method, payment_status, shipping_address, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-			orderID, userID, g.sellerID, userEmail, buyerName, g.sellerName, subTotal, "PENDING", paymentMethod, "PENDING", addrJSON, now, now,
+			orderID, userID, g.sellerID, userEmail, buyerName, g.sellerName, subTotal, "PENDING", paymentMethod, "PENDING", string(addrJSON), now, now,
 		)
 		if err != nil {
 			log.Printf("Error creating order: %v", err)

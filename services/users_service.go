@@ -171,9 +171,9 @@ func generateToken(email string, userType model.UserType) (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-func mustMarshalAddress(a model.Address) []byte {
+func mustMarshalAddress(a model.Address) string {
 	b, _ := json.Marshal(a)
-	return b
+	return string(b)
 }
 
 func unmarshalAddress(b []byte, a *model.Address) error {
@@ -231,7 +231,7 @@ func GetUserByEmail(email string) (*model.User, error) {
 func UpdateUser(id string, firstName, lastName, contact string, address *model.Address) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var addrBytes []byte
+	var addrBytes string
 	if address != nil {
 		addrBytes = mustMarshalAddress(*address)
 	} else {

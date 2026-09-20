@@ -92,7 +92,7 @@ func CreateProduct(product *model.Product, sellerEmail string) error {
 		`INSERT INTO products (id, seller_id, seller_name, title, name, description, price, quantity, is_available, images, category, sku, condition, tags, views, rating, review_count, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
 		product.ID, product.SellerId, product.SellerName, product.Title, product.Name, product.Description, product.Price, product.Quantity, product.IsAvailable,
-		imagesJSON, product.Category, product.SKU, product.Condition, tagsJSON, product.Views, product.Rating, product.ReviewCount, product.CreatedAt, product.UpdatedAt,
+		string(imagesJSON), product.Category, product.SKU, product.Condition, string(tagsJSON), product.Views, product.Rating, product.ReviewCount, product.CreatedAt, product.UpdatedAt,
 	)
 	if err != nil {
 		log.Printf("Error creating product: %v", err)
@@ -279,8 +279,8 @@ func UpdateProduct(id string, updates *model.Product, userEmail string, userType
 	if len(updates.Tags) > 0 {
 		tags = updates.Tags
 	}
-	imagesJSON, _ = json.Marshal(images)
-	tagsJSON, _ = json.Marshal(tags)
+	imagesValue, _ := json.Marshal(images)
+	tagsValue, _ := json.Marshal(tags)
 	category := existing.Category
 	if updates.Category != "" {
 		category = updates.Category
@@ -296,7 +296,7 @@ func UpdateProduct(id string, updates *model.Product, userEmail string, userType
 
 	_, err = database.Pool.Exec(ctx,
 		`UPDATE products SET title = $1, name = $1, description = $2, price = $3, quantity = $4, images = $5, category = $6, sku = $7, condition = $8, tags = $9, is_available = $10, updated_at = $11 WHERE id = $12`,
-		title, desc, price, quantity, imagesJSON, category, sku, condition, tagsJSON, updates.IsAvailable, time.Now(), id,
+		title, desc, price, quantity, string(imagesValue), category, sku, condition, string(tagsValue), updates.IsAvailable, time.Now(), id,
 	)
 	if err != nil {
 		return errors.New("failed to update product")
