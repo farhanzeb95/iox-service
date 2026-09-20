@@ -129,6 +129,31 @@ func GetUserById(id string) (*model.User, error) {
 	return &u, nil
 }
 
+func UpdateSellerStatus(id, status string) (*model.User, error) {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	if status != model.UserStatusActive && status != model.UserStatusRejected && status != model.UserStatusInReview {
+		return nil, errors.New("invalid seller status")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var userType model.UserType
+	if err := database.Pool.QueryRow(ctx, `SELECT type FROM users WHERE id = $1`, id).Scan(&userType); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, errors.New("user not found")
+		}
+		return nil, err
+	}
+	if userType != model.TypePrivateSeller && userType != model.TypeBusinessSeller {
+		return nil, errors.New("only sellers can have their status changed")
+	}
+
+	if _, err := database.Pool.Exec(ctx, `UPDATE users SET status = $1, updated_at = $2 WHERE id = $3`, status, time.Now(), id); err != nil {
+		return nil, err
+	}
+	return GetUserById(id)
+}
+
 func LoginUser(email, password string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

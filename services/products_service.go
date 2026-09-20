@@ -43,12 +43,13 @@ func CreateProduct(product *model.Product, sellerEmail string) error {
 
 	var seller model.User
 	var feeStatus string
+	periodStart := time.Date(time.Now().Year(), time.Now().Month(), 1, 0, 0, 0, 0, time.Now().Location())
 	err := database.Pool.QueryRow(ctx, `
 		SELECT u.id, u.first_name, u.last_name, u.type, u.status,
 		       COALESCE(f.status, 'NOT_SUBMITTED')
 		FROM users u
 		LEFT JOIN seller_store_fees f ON f.seller_id = u.id
-		WHERE u.email = $1`, sellerEmail).
+		WHERE u.email = $1 AND (f.billing_period_start = $2 OR f.id IS NULL)`, sellerEmail, periodStart).
 		Scan(&seller.ID, &seller.FirstName, &seller.LastName, &seller.Type, &seller.Status, &feeStatus)
 	if err != nil {
 		if err == pgx.ErrNoRows {

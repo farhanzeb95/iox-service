@@ -19,5 +19,6 @@ func SetupUserRoutes(rg *gin.RouterGroup) {
 		users.GET("/me", middleware.AuthMiddleware(), user_controller.GetCurrentUser)
 		users.PATCH("/:id", middleware.AuthMiddleware(), user_controller.UpdateCurrentUser)
 		users.GET("/:id", middleware.AuthMiddleware(), middleware.RequireRole(string(model.TypeAdmin)), user_controller.GetUserById)
+		users.PATCH("/:id/status", middleware.AuthMiddleware(), middleware.RequireRole(string(model.TypeAdmin)), user_controller.UpdateSellerStatus)
 	}
 }

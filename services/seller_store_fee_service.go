@@ -36,6 +36,16 @@ func sellerStoreFeeForType(userType model.UserType) (float64, error) {
 	}
 }
 
+func currentBillingPeriod(now time.Time) (time.Time, time.Time) {
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	return start, start.AddDate(0, 1, 0)
+}
+
+const sellerStoreFeeColumns = `id, seller_id, amount, payment_method, payment_reference, status,
+	COALESCE(review_note, ''), COALESCE(reviewed_by::text, ''), submitted_at,
+	COALESCE(reviewed_at, 'epoch'::timestamptz), billing_period_start,
+	billing_period_end, created_at, updated_at`
+
 func GetSellerStoreFee(email string) (*model.SellerStoreFee, float64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -53,10 +63,9 @@ func GetSellerStoreFee(email string) (*model.SellerStoreFee, float64, error) {
 		return nil, 0, err
 	}
 
-	fee, err := scanSellerStoreFee(database.Pool.QueryRow(ctx, `
-		SELECT id, seller_id, amount, payment_method, payment_reference, status, COALESCE(review_note, ''),
-		       COALESCE(reviewed_by::text, ''), submitted_at, COALESCE(reviewed_at, 'epoch'::timestamptz), created_at, updated_at
-		FROM seller_store_fees WHERE seller_id = $1`, userID))
+	periodStart, _ := currentBillingPeriod(time.Now())
+	fee, err := scanSellerStoreFee(database.Pool.QueryRow(ctx, `SELECT `+sellerStoreFeeColumns+`
+		FROM seller_store_fees WHERE seller_id = $1 AND billing_period_start = $2`, userID, periodStart))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, 0, err
 	}
@@ -91,8 +100,9 @@ func SubmitSellerStoreFee(email, paymentMethod, paymentReference string) (*model
 		return nil, err
 	}
 
+	periodStart, periodEnd := currentBillingPeriod(time.Now())
 	var existingStatus string
-	err = database.Pool.QueryRow(ctx, `SELECT status FROM seller_store_fees WHERE seller_id = $1`, userID).Scan(&existingStatus)
+	err = database.Pool.QueryRow(ctx, `SELECT status FROM seller_store_fees WHERE seller_id = $1 AND billing_period_start = $2`, userID, periodStart).Scan(&existingStatus)
 	if err == nil && existingStatus == model.SellerFeePaid {
 		return nil, errors.New("seller store fee is already paid")
 	}
@@ -100,25 +110,22 @@ func SubmitSellerStoreFee(email, paymentMethod, paymentReference string) (*model
 		return nil, err
 	}
 
-	feeID := uuid.New().String()
 	now := time.Now()
 	var fee *model.SellerStoreFee
 	if errors.Is(err, pgx.ErrNoRows) {
 		fee, err = scanSellerStoreFee(database.Pool.QueryRow(ctx, `
-			INSERT INTO seller_store_fees (id, seller_id, amount, payment_method, payment_reference, status, submitted_at, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7)
-			RETURNING id, seller_id, amount, payment_method, payment_reference, status, COALESCE(review_note, ''),
-			          COALESCE(reviewed_by::text, ''), submitted_at, COALESCE(reviewed_at, 'epoch'::timestamptz), created_at, updated_at`,
-			feeID, userID, amount, paymentMethod, paymentReference, model.SellerFeePending, now))
+			INSERT INTO seller_store_fees (id, seller_id, amount, payment_method, payment_reference, status, billing_period_start, billing_period_end, submitted_at, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $9)
+			RETURNING `+sellerStoreFeeColumns,
+			uuid.New().String(), userID, amount, paymentMethod, paymentReference, model.SellerFeePending, periodStart, periodEnd, now))
 	} else {
 		fee, err = scanSellerStoreFee(database.Pool.QueryRow(ctx, `
 			UPDATE seller_store_fees
 			SET amount = $1, payment_method = $2, payment_reference = $3, status = $4,
 			    review_note = NULL, reviewed_by = NULL, reviewed_at = NULL, submitted_at = $5, updated_at = $5
-			WHERE seller_id = $6
-			RETURNING id, seller_id, amount, payment_method, payment_reference, status, COALESCE(review_note, ''),
-			          COALESCE(reviewed_by::text, ''), submitted_at, COALESCE(reviewed_at, 'epoch'::timestamptz), created_at, updated_at`,
-			amount, paymentMethod, paymentReference, model.SellerFeePending, now, userID))
+			WHERE seller_id = $6 AND billing_period_start = $7
+			RETURNING `+sellerStoreFeeColumns,
+			amount, paymentMethod, paymentReference, model.SellerFeePending, now, userID, periodStart))
 	}
 	if err != nil {
 		return nil, err
@@ -142,8 +149,7 @@ func ReviewSellerStoreFee(feeID, adminEmail, status, note string) (*model.Seller
 		UPDATE seller_store_fees
 		SET status = $1, review_note = $2, reviewed_by = $3, reviewed_at = $4, updated_at = $4
 		WHERE id = $5
-		RETURNING id, seller_id, amount, payment_method, payment_reference, status, COALESCE(review_note, ''),
-		          COALESCE(reviewed_by::text, ''), submitted_at, COALESCE(reviewed_at, 'epoch'::timestamptz), created_at, updated_at`,
+		RETURNING `+sellerStoreFeeColumns,
 		status, strings.TrimSpace(note), adminID, now, feeID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("seller store fee not found")
@@ -158,8 +164,7 @@ func ListSellerStoreFees() ([]model.SellerStoreFee, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	rows, err := database.Pool.Query(ctx, `
-		SELECT id, seller_id, amount, payment_method, payment_reference, status, COALESCE(review_note, ''),
-		       COALESCE(reviewed_by::text, ''), submitted_at, COALESCE(reviewed_at, 'epoch'::timestamptz), created_at, updated_at
+		SELECT `+sellerStoreFeeColumns+`
 		FROM seller_store_fees ORDER BY submitted_at DESC`)
 	if err != nil {
 		return nil, err
@@ -184,6 +189,6 @@ func scanSellerStoreFee(row rowScanner) (*model.SellerStoreFee, error) {
 	return &fee, row.Scan(
 		&fee.ID, &fee.SellerID, &fee.Amount, &fee.PaymentMethod, &fee.PaymentReference,
 		&fee.Status, &fee.ReviewNote, &fee.ReviewedBy, &fee.SubmittedAt, &fee.ReviewedAt,
-		&fee.CreatedAt, &fee.UpdatedAt,
+		&fee.BillingPeriodStart, &fee.BillingPeriodEnd, &fee.CreatedAt, &fee.UpdatedAt,
 	)
 }

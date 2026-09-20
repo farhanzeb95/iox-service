@@ -13,9 +13,9 @@ func SetupOrderRoutes(rg *gin.RouterGroup) {
 	orders.Use(middleware.AuthMiddleware())
 	{
 		orders.POST("", middleware.RequireRole("BUYER"), order_controller.PlaceOrder)
-		orders.GET("", order_controller.GetMyOrders)
-		orders.GET("/:id", order_controller.GetOrderByID)
-		orders.PATCH("/:id/status", order_controller.UpdateOrderStatus)
+		orders.GET("", middleware.RequireActiveSeller(), order_controller.GetMyOrders)
+		orders.GET("/:id", middleware.RequireActiveSeller(), order_controller.GetOrderByID)
+		orders.PATCH("/:id/status", middleware.RequireActiveSeller(), order_controller.UpdateOrderStatus)
 		orders.POST("/:id/return", middleware.RequireRole("BUYER"), order_controller.RequestReturn)
 	}
 }

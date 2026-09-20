@@ -56,6 +56,30 @@ func GetUserById(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+type UpdateSellerStatusInput struct {
+	Status string `json:"status" binding:"required"`
+}
+
+// UpdateSellerStatus handles admin approval/rejection of seller accounts.
+func UpdateSellerStatus(c *gin.Context) {
+	var input UpdateSellerStatusInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status is required"})
+		return
+	}
+	user, err := services.UpdateSellerStatus(c.Param("id"), input.Status)
+	if err != nil {
+		if err.Error() == "user not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	user.Password = ""
+	c.JSON(http.StatusOK, user)
+}
+
 func LoginUser(c *gin.Context) {
 	var request struct {
 		Email    string

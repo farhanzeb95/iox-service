@@ -24,11 +24,12 @@ func SetupProductRoutes(rg *gin.RouterGroup) {
 		protected := products.Group("")
 		protected.Use(middleware.AuthMiddleware())
 		{
-			protected.GET("/my-products", product_controller.GetMyProducts) // Get current user's products
-			protected.POST("", middleware.RequireRole("PRIVATE_SELLER", "BUSINESS_SELLER"), product_controller.CreateProduct)
-			protected.POST("/upload", upload_controller.UploadProductImages) // Image upload endpoint
-			protected.PUT("/:id", product_controller.UpdateProduct)
-			protected.DELETE("/:id", product_controller.DeleteProduct)
+			activeSeller := middleware.RequireActiveSeller()
+			protected.GET("/my-products", activeSeller, product_controller.GetMyProducts)
+			protected.POST("", middleware.RequireRole("PRIVATE_SELLER", "BUSINESS_SELLER"), activeSeller, product_controller.CreateProduct)
+			protected.POST("/upload", activeSeller, upload_controller.UploadProductImages)
+			protected.PUT("/:id", activeSeller, product_controller.UpdateProduct)
+			protected.DELETE("/:id", activeSeller, product_controller.DeleteProduct)
 		}
 	}
 }
