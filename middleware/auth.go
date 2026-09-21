@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"iox-service/database"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -55,6 +57,19 @@ func AuthMiddleware() gin.HandlerFunc {
 			// Store user info in context
 			c.Set("user_email", claims["user_id"])
 			c.Set("user_type", claims["type"])
+			if claims["type"] != "ADMIN" {
+				var status string
+				if err := database.Pool.QueryRow(c.Request.Context(), `SELECT status FROM users WHERE email = $1`, claims["user_id"]).Scan(&status); err != nil {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "user account could not be verified"})
+					c.Abort()
+					return
+				}
+				if status == "SUSPENDED" {
+					c.JSON(http.StatusForbidden, gin.H{"error": "user account is temporarily suspended"})
+					c.Abort()
+					return
+				}
+			}
 		} else {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
 			c.Abort()

@@ -131,7 +131,7 @@ func GetUserById(id string) (*model.User, error) {
 
 func UpdateSellerStatus(id, status string) (*model.User, error) {
 	status = strings.ToUpper(strings.TrimSpace(status))
-	if status != model.UserStatusActive && status != model.UserStatusRejected && status != model.UserStatusInReview {
+	if status != model.UserStatusActive && status != model.UserStatusRejected && status != model.UserStatusInReview && status != model.UserStatusSuspended {
 		return nil, errors.New("invalid seller status")
 	}
 
@@ -144,8 +144,8 @@ func UpdateSellerStatus(id, status string) (*model.User, error) {
 		}
 		return nil, err
 	}
-	if userType != model.TypePrivateSeller && userType != model.TypeBusinessSeller {
-		return nil, errors.New("only sellers can have their status changed")
+	if userType == model.TypeAdmin {
+		return nil, errors.New("administrator status cannot be changed")
 	}
 
 	if _, err := database.Pool.Exec(ctx, `UPDATE users SET status = $1, updated_at = $2 WHERE id = $3`, status, time.Now(), id); err != nil {

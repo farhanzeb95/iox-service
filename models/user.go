@@ -39,24 +39,25 @@ func (a *Address) Scan(value interface{}) error {
 
 // UserStatus for seller account review
 const (
-	UserStatusActive   = "ACTIVE"
-	UserStatusInReview = "IN_REVIEW"
-	UserStatusRejected = "REJECTED"
+	UserStatusActive    = "ACTIVE"
+	UserStatusInReview  = "IN_REVIEW"
+	UserStatusRejected  = "REJECTED"
+	UserStatusSuspended = "SUSPENDED"
 )
 
 type User struct {
-	ID                     string    `json:"id,omitempty"`
-	FirstName              string    `json:"FirstName"`
-	LastName               string    `json:"LastName"`
-	Email                  string    `json:"Email"`
-	Password               string    `json:"Password"`
-	Type                   UserType  `json:"Type"`
-	Contact                string    `json:"Contact"`
-	Address                Address   `json:"Address"`
-	Status                 string    `json:"status"` // ACTIVE, IN_REVIEW, REJECTED
+	ID                      string    `json:"id,omitempty"`
+	FirstName               string    `json:"FirstName"`
+	LastName                string    `json:"LastName"`
+	Email                   string    `json:"Email"`
+	Password                string    `json:"Password"`
+	Type                    UserType  `json:"Type"`
+	Contact                 string    `json:"Contact"`
+	Address                 Address   `json:"Address"`
+	Status                  string    `json:"status"` // ACTIVE, IN_REVIEW, REJECTED, SUSPENDED
 	BusinessRegistrationURL string    `json:"businessRegistrationUrl,omitempty"`
-	IdCardFrontURL         string    `json:"idCardFrontUrl,omitempty"`
-	IdCardBackURL          string    `json:"idCardBackUrl,omitempty"`
-	CreatedAt              time.Time `json:"createdAt,omitempty"`
-	UpdatedAt              time.Time `json:"updatedAt,omitempty"`
+	IdCardFrontURL          string    `json:"idCardFrontUrl,omitempty"`
+	IdCardBackURL           string    `json:"idCardBackUrl,omitempty"`
+	CreatedAt               time.Time `json:"createdAt,omitempty"`
+	UpdatedAt               time.Time `json:"updatedAt,omitempty"`
 }
